@@ -1182,6 +1182,69 @@ static apr_status_t ssl_init_server_certs(server_rec *s,
 
         ERR_clear_error();
 
+        if (strcEQn(keyfile, "engine:", 7)) {
+#if defined(HAVE_OPENSSL_ENGINE_H) && defined(HAVE_ENGINE_INIT)
+            char *keyform = apr_pstrdup(ptemp, keyfile), *p, *last;
+            ENGINE *engine;
+            EVP_PKEY *pkey;
+
+            p = keyform + 7;
+            last = strchr(p, ':');
+
+            if (last == NULL) {
+                ap_log_error(APLOG_MARK, APLOG_EMERG, 0, s, APLOGNO(90001)
+                             "Bad format for engine private key %s (%s)",
+                             key_id, keyfile);
+                ssl_log_ssl_error(SSLLOG_MARK, APLOG_EMERG, s);
+                return APR_EGENERAL;
+            }
+
+            *last++ = '\0';
+
+            engine = ENGINE_by_id( (char *)p );
+
+            if (engine == NULL) {
+                ap_log_error(APLOG_MARK, APLOG_EMERG, 0, s, APLOGNO(90002)
+                             "Failed to load Crypto Device API '%s'"
+                             " while processing engine private key %s (%s)",
+                             p, key_id, keyfile );
+                ssl_log_ssl_error(SSLLOG_MARK, APLOG_EMERG, s);
+                return APR_EGENERAL;
+            }
+
+            pkey = ENGINE_load_private_key(engine, (char *)last, 0, 0);
+
+            if (pkey == NULL) {
+                ap_log_error(APLOG_MARK, APLOG_EMERG, 0, s, APLOGNO(90002)
+                             "Failed to configure engine private key %s (%s)",
+                             key_id, keyfile );
+                ssl_log_ssl_error( SSLLOG_MARK, APLOG_EMERG, s );
+                ENGINE_free(engine);
+                return APR_EGENERAL;
+            }
+
+            ENGINE_free( engine );
+
+            if (SSL_CTX_use_PrivateKey( mctx->ssl_ctx, pkey ) == 0) {
+                ap_log_error(APLOG_MARK, APLOG_EMERG, 0, s, APLOGNO(90003)
+                             "Failed to configure engine private key %s (%s)",
+                             key_id, keyfile);
+                ssl_log_ssl_error(SSLLOG_MARK, APLOG_EMERG, s);
+                EVP_PKEY_free(pkey);
+                return APR_EGENERAL;
+            }
+
+            EVP_PKEY_free( pkey );
+            goto check_private_key;
+#else // NO OPENSSL ENGINE
+            ap_log_error(APLOG_MARK, APLOG_EMERG, 0, s, APLOGNO(90004)
+                         "Not supported engine private key %s (%s)",
+                         key_id, keyfile);
+            ssl_log_ssl_error(SSLLOG_MARK, APLOG_EMERG, s);
+            return APR_EGENERAL;
+#endif // OPENSSL ENGINE
+        }
+
         if ((SSL_CTX_use_PrivateKey_file(mctx->ssl_ctx, keyfile,
                                          SSL_FILETYPE_PEM) < 1) &&
             (ERR_GET_FUNC(ERR_peek_last_error())
@@ -1206,6 +1269,8 @@ static apr_status_t ssl_init_server_certs(server_rec *s,
                 return APR_EGENERAL;
             }
         }
+
+check_private_key:
 
         if (SSL_CTX_check_private_key(mctx->ssl_ctx) < 1) {
             ap_log_error(APLOG_MARK, APLOG_EMERG, 0, s, APLOGNO(02565)

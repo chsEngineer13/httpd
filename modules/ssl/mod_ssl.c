@@ -399,6 +399,7 @@ static int ssl_hook_pre_config(apr_pool_t *pconf,
 #endif
     ERR_load_crypto_strings();
     SSL_load_error_strings();
+    OPENSSL_config(NULL);
     SSL_library_init();
 #if HAVE_ENGINE_LOAD_BUILTIN_ENGINES
     ENGINE_load_builtin_engines();
